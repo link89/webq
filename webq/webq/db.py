@@ -35,22 +35,8 @@ class DBComponent:
         finally:
             db_session.close()
 
-
-_db = DBComponent()
-
-
-# expose db functions
-def init(db_url: str, db = _db):
-    db.init(db_url)
-
-def get_engine(db = _db):
-    return db.get_engine()
-
-def get_db_session(db = _db):
-    return db.get_db_session()
-
-def create_tables(db = _db):
-    # use the side effect of importing db_model to register models
-    from .model import db as db_model
-    # create tables
-    Base.metadata.create_all(bind=get_engine(db))  # type: ignore
+    def create_tables(self):
+        # use the side effect of importing db_model to register models
+        from .model import db as db_model
+        # create tables
+        Base.metadata.create_all(bind=self.get_engine())  # type: ignore
