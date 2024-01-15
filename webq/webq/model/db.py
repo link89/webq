@@ -14,27 +14,44 @@ S_LONG = 4096  # the size of page is 4KB
 
 class UserPerm(IntFlag):
     ADMIN = 1
-    CREATE_JOB_QUEUE = 2
+
+    VIEW_USERS = 2
+    CREATE_USER = 4
+    UPDATE_USER = 8
+
+    VIEW_JOB_QUEUES = 16
+    CREATE_JOB_QUEUE = 32
+    UPDATE_JOB_QUEUE = 64
 
 
 class JobQueuePerm(IntFlag):
-    OWNER = 1
-    CREATE_JOB = 2
-    APPLY_OFFER = 4
-    VIEW_ALL_JOB = 8
-    VIEW_ALL_OFFER = 16
+    ADMIN = 1
+
+    VIEW_JOBS = 2
+    CREATE_JOB = 4
+    UPDATE_JOB = 8  # update any job in the queue
+
+    APPLY_JOB = 16
+
+    VIEW_COMMITS = 32
+    CREATE_COMMIT = 64
+    UPDATE_COMMIT = 128  # update any commit in the queue
 
 
 class JobState(IntEnum):
+    # set by crowdsourcer
     DRAFT = 0
-    READY = 1  # a job in ready state should be immutable
+    READY = 1
 
 
-class OfferState(IntEnum):
+class CommitState(IntEnum):
+    # set by worker
     PENDING = 0
-    RESOLVED = 1
-    REJECTED = 2
-    TIMEOUT = 3
+    ABORTED = 1
+    DONE = 2
+    # set by job owner/supervisor
+    REJECTED = 3
+    ACCEPTED = 4
 
 
 class TimestampMixin:
@@ -70,7 +87,6 @@ class Session(Base, TimestampMixin):
                         foreign_keys=[user_id],
                         primaryjoin='User.id == Session.user_id',
                         backref='sessions')
-
 
 
 class UserToken(Base, TimestampMixin):
@@ -157,33 +173,32 @@ class JobFile(Base, FileMixin):
                        backref='files')
 
 
-class Offer(Base, TimestampMixin):
-    __tablename__ = 'offer'
+class Commit(Base, TimestampMixin):
+    __tablename__ = 'commit'
 
     id = Column(Integer, primary_key=True)
 
     data = Column(JSON)
     state = Column(Integer, index=True)
 
-
     job_id = Column(Integer, index=True)
     job = relationship('Job',
                        foreign_keys=[job_id],
-                       primaryjoin='Job.id == Offer.job_id',
-                       backref='offers')
+                       primaryjoin='Job.id == Commit.job_id',
+                       backref='commits')
 
     owner_id = Column(Integer, index=True)
     owner = relationship('User',
                          foreign_keys=[owner_id],
-                         primaryjoin='User.id == Offer.owner_id',
-                         backref='offers')
+                         primaryjoin='User.id == Commit.owner_id',
+                         backref='commits')
 
 
-class OfferFile(Base, FileMixin):
-    __tablename__ = 'offer_file'
+class CommitFile(Base, FileMixin):
+    __tablename__ = 'commit_file'
 
-    offer_id = Column(Integer, index=True)
-    offer = relationship('Offer',
-                         foreign_keys=[offer_id],
-                         primaryjoin='Offer.id == OfferFile.offer_id',
-                         backref='files')
+    commit_id = Column(Integer, index=True)
+    commit = relationship('Commit',
+                          foreign_keys=[commit_id],
+                          primaryjoin='Commit.id == CommitFile.commit_id',
+                          backref='files')

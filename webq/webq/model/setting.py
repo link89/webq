@@ -19,5 +19,7 @@ class Setting(BaseModel):
     host: str = 'localhost'
     port: int = 5000
 
+    base_url: str = '/webq'
+
     db_url: str = 'sqlite:///./webq.db'
     storage: Storage = Storage()

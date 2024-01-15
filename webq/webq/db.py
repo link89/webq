@@ -2,6 +2,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
+from contextlib import contextmanager
+
 
 Base = declarative_base()
 
@@ -17,7 +19,8 @@ class DBComponent:
             print('initializing engine:', db_url)
             self.engine = create_engine(db_url)
         if self.session_factory is None:
-            self.session_factory = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+            self.session_factory = sessionmaker(
+                autocommit=False, autoflush=False, bind=self.engine)
 
     def get_engine(self):
         assert self.engine, "engine not initialized"
@@ -27,6 +30,7 @@ class DBComponent:
         assert self.session_factory, "session factory not initialized"
         return self.session_factory
 
+    @contextmanager
     def get_db_session(self):
         session_factory = self.get_session_factory()
         db_session = session_factory()
