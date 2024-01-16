@@ -2,7 +2,7 @@ import fire
 
 
 def start(c: str):
-    from .app import config, db
+    from .context import config, db
 
     config.init(c)
     db.init(config.config.db_url)
@@ -11,7 +11,7 @@ def start(c: str):
 
 
 def db_init(c: str):
-    from .app import config, db
+    from .context import config, db
     config.init(c)
     db.init(config.config.db_url)
     db.create_tables()

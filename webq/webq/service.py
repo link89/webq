@@ -8,6 +8,8 @@ from .db import DBComponent
 from .model.db import User, UserToken, UserPerm, Session
 from .model.dto import CreateUserReq, UpdateUserReq
 
+# TODO: use either monad for error handling
+
 
 def has_perm(perm, perm_list):
     for p in perm_list:
@@ -47,6 +49,12 @@ class DbService(Service):
     def get_session(self):
         return self.db.get_db_session()
 
+    def _query_user(self, session, user_id: int):
+        return session.query(User).filter_by(id=user_id, deleted=0)
+
+    def _query_users(self, session):
+        return session.query(User).filter_by(deleted=0)
+
 
 # TODO: handle session expire
 class AuthService(DbService):
@@ -67,7 +75,6 @@ class AuthService(DbService):
             session.commit()
             return str(session_token.id) + '-' +  token
 
-
     def get_user_by_session(self, token: str):
         sid, token = token.split('-', maxsplit=1)
         sid = int(sid)
@@ -78,8 +85,8 @@ class AuthService(DbService):
             if session_token is None:
                 return None
             session.query(Session).filter_by(id=sid).update({'updated_at': datetime.now()})
+            session.commit()
             return session_token.user
-
 
 
 class UserService(DbService):
@@ -88,13 +95,13 @@ class UserService(DbService):
         if me.id != user_id and not has_perm(me.perm, [UserPerm.ADMIN, UserPerm.VIEW_USERS]):
             raise err_perm_deny()
         with self.get_session() as session:
-            return session.query(User).filter_by(id=user_id, deleted=0).first()
+            return self._query_user(session, user_id).first()
 
     def get_users(self, me: User):
         if not has_perm(me.perm, [UserPerm.ADMIN, UserPerm.VIEW_USERS]):
             return [me]
         with self.get_session() as session:
-            return session.query(User).filter_by(deleted=0).all()
+            return self._query_users(session).all()
 
     def create_user(self, req: CreateUserReq, me: User):
         if not has_perm(me.perm, [UserPerm.ADMIN, UserPerm.CREATE_USER]):
@@ -122,22 +129,19 @@ class UserService(DbService):
                 req_dict['password'].encode(), bcrypt.gensalt())
 
         with self.get_session() as session:
-            user = session.query(User).filter_by(id=user_id).first()
+            user = self._query_user(session, user_id).first()
             if user is None:
                 raise err_not_found('user', user_id)
-            session.query(User).filter_by(
-                id=user_id, deleted=0).update(req_dict)
+            self._query_user(session, user_id).update(req_dict)
             session.commit()
-            return session.query(User).filter_by(id=user_id).first()
+            return self._query_user(session, user_id).first()
 
     def delete_user(self, user_id: int, me: User):
         if me.id != user_id and not has_perm(me.perm, [UserPerm.ADMIN, UserPerm.UPDATE_USER]):
             raise err_perm_deny()
 
         with self.get_session() as session:
-            session.query(User).filter_by(
-                id=user_id, deleted=0).update({'deleted': 1})
+            self._query_user(session, user_id).update({'deleted': 1})
+            session.commit()
 
 
-    def create_token(self, user_id: int, me: User):
-        ...
