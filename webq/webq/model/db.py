@@ -71,8 +71,7 @@ class User(Base, TimestampMixin):
     id = Column(Integer, primary_key=True)
     username = Column(String(S_SHORT), unique=True)
     password = Column(String(S_SHORT))
-    salt = Column(String(S_SHORT))
-    permission = Column(Integer, default=0)
+    perm = Column(Integer, default=0)
     note = Column(Text, default='')
 
 
@@ -80,7 +79,7 @@ class Session(Base, TimestampMixin):
     __tablename__ = 'session'
 
     id = Column(Integer, primary_key=True)
-    uuid = Column(String(S_SHORT), unique=True)
+    token = Column(String(S_SHORT), unique=True)
 
     user_id = Column(Integer, index=True)
     user = relationship('User',
@@ -93,7 +92,7 @@ class UserToken(Base, TimestampMixin):
     __tablename__ = 'user_token'
 
     id = Column(Integer, primary_key=True)
-    uuid = Column(String(S_SHORT), unique=True)
+    token = Column(String(S_SHORT), unique=True)
     note = Column(Text, default='')
 
     user_id = Column(Integer, index=True)
@@ -110,7 +109,7 @@ class JobQueue(Base, TimestampMixin):
     name = Column(String(S_SHORT), index=True)
     note = Column(Text, default='')
 
-    is_deleted = Column(Integer, default=0, index=True)
+    deleted = Column(Integer, default=0, index=True)
 
     owner_id = Column(Integer, index=True)
     owner = relationship('User',
@@ -123,9 +122,9 @@ class JobQueueMember(Base, TimestampMixin):
     __tablename__ = 'job_queue_member'
 
     id = Column(Integer, primary_key=True)
-    permission = Column(Integer)
+    perm = Column(Integer)
 
-    is_deleted = Column(Integer, default=0, index=True)
+    deleted = Column(Integer, default=0, index=True)
 
     jobq_id = Column(Integer, index=True)
     jobq = relationship('JobQueue',
@@ -148,7 +147,7 @@ class Job(Base, TimestampMixin):
     data = Column(JSON)
     state = Column(Integer, index=True)
 
-    is_deleted = Column(Integer, default=0, index=True)
+    deleted = Column(Integer, default=0, index=True)
 
     jobq_id = Column(Integer, index=True)
     jobq = relationship('JobQueue',

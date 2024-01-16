@@ -1,13 +1,25 @@
-from pydantic import BaseModel
+from typing import Optional
+from pydantic import BaseModel  # type: ignore
 
 
-class CreateUserReq(BaseModel):
+def convert_to_optional(schema):
+    return {k: Optional[v] for k, v in schema.__annotations__.items()}
+
+
+class UserBase(BaseModel):
     username: str
+    perm: int = 0
+    note: str = ''
+
+
+class CreateUserReq(UserBase):
     password: str
-    permission: int = 0
 
 
-class UserRes(BaseModel):
+class UpdateUserReq(CreateUserReq):
+    __annotations__ = convert_to_optional(CreateUserReq)
+
+
+class UserRes(UserBase):
     id: int
-    username: str
-    permission: int = 0
+
