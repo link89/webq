@@ -7,6 +7,8 @@ import hashlib
 from .db import DBComponent
 from .model.db import User, UserToken, UserPerm, Session
 from .model.dto import CreateUserReq, UpdateUserReq
+from .model.dto import err_perm_deny, err_not_found
+
 
 # TODO: use either monad for error handling
 
@@ -24,18 +26,6 @@ def gen_token():
 
 def hash_token(token: str):
     return hashlib.sha256(token.encode()).hexdigest()
-
-
-def err_unauthorized(msg='unauthorized'):
-    return HTTPException(status_code=401, detail=msg)
-
-
-def err_perm_deny(msg='permission denied'):
-    return HTTPException(status_code=403, detail=msg)
-
-
-def err_not_found(obj_name, obj_id):
-    return HTTPException(status_code=404, detail=f'{obj_name} {obj_id} not found')
 
 
 class Service:
@@ -56,10 +46,10 @@ class DbService(Service):
         return session.query(User).filter_by(deleted=0)
 
 
-# TODO: handle session expire
 class AuthService(DbService):
 
     def create_session_token(self, username: str, password: str):
+        # TODO: handle session expire
         with self.get_session() as session:
             user = session.query(User).filter_by(
                 username=username, deleted=0).first()
@@ -84,6 +74,7 @@ class AuthService(DbService):
                 id=sid, token=token).first()
             if session_token is None:
                 return None
+            # refresh session
             session.query(Session).filter_by(id=sid).update({'updated_at': datetime.now()})
             session.commit()
             return session_token.user
