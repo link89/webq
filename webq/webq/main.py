@@ -18,11 +18,11 @@ def start(c: str):
 
 
 def db_init(c: str):
-    from .context import config, db
+    from .context import config, db, user_service
     config.init(c)
     db.init(config.config.db_url)
     db.create_tables()
-    # TODO: create admin user
+    user_service.create_admin()
 
 
 def main():

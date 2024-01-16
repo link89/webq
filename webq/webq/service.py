@@ -1,13 +1,22 @@
-from fastapi import HTTPException
 from datetime import datetime
 import bcrypt
 import secrets
 import hashlib
 
+from .model.db import (
+    User, UserToken, UserPerm, Session,
+    JobQueue, JobQueueMember, JobQueuePerm,
+)
+from .model.dto import (
+    CreateUserReq, UpdateUserReq, UserRes,
+    CreateJobQueueReq,
+    err_perm_deny, err_not_found,
+)
+
 from .db import DBComponent
-from .model.db import User, UserToken, UserPerm, Session
-from .model.dto import CreateUserReq, UpdateUserReq
-from .model.dto import err_perm_deny, err_not_found
+from .log import get_logger
+
+logger = get_logger(__name__)
 
 
 def has_perm(perm, perm_list):
@@ -20,6 +29,8 @@ def has_perm(perm, perm_list):
 def gen_token():
     return secrets.token_urlsafe(32)
 
+def hash_password(password: str):
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 def hash_token(token: str):
     return hashlib.sha256(token.encode()).hexdigest()
@@ -81,6 +92,23 @@ class AuthService(DbService):
 
 class UserService(DbService):
 
+    def create_admin(self):
+        username = 'admin'
+        password = secrets.token_urlsafe(16)
+        with self.get_session() as session:
+            # if no admin exists, create one
+            if session.query(User).filter_by(name=username).first() is None:
+                user = User()
+                user.name = 'admin'
+                user.password = hash_password(password)
+                user.perm = UserPerm.ADMIN
+                session.add(user)
+                session.commit()
+                logger.info('admin created with password: %s', password)
+                return user
+            else:
+                logger.info('admin already exists')
+
     def get_user(self, user_id: int, me: User):
         if me.id != user_id and not has_perm(me.perm, [UserPerm.ADMIN, UserPerm.VIEW_USERS]):
             raise err_perm_deny()
@@ -103,10 +131,10 @@ class UserService(DbService):
             user.name = req.name
             user.note = req.note
             user.perm = req.perm
-            user.password = bcrypt.hashpw(
-                req.password.encode(), bcrypt.gensalt()).decode()
+            user.password = hash_password(req.password)
             session.add(user)
             session.commit()
+            session.refresh(user)
             return user
 
     def update_user(self, user_id: int, req: UpdateUserReq, me: User):
@@ -124,7 +152,8 @@ class UserService(DbService):
                 raise err_not_found('user', user_id)
             self._query_user(session, user_id).update(req_dict)
             session.commit()
-            return self._query_user(session, user_id).first()
+            session.refresh(user)
+            return user
 
     def delete_user(self, user_id: int, me: User):
         if me.id != user_id and not has_perm(me.perm, [UserPerm.ADMIN, UserPerm.UPDATE_USER]):
@@ -133,3 +162,55 @@ class UserService(DbService):
         with self.get_session() as session:
             self._query_user(session, user_id).update({'deleted': 1})
             session.commit()
+
+
+class JobQueueService(DbService):
+
+    def create_queue(self, req: CreateJobQueueReq, me: User):
+        if not has_perm(me.perm, [UserPerm.ADMIN, UserPerm.CREATE_JOB_QUEUE]):
+           raise err_perm_deny()
+
+        with self.get_session() as session:
+            queue = JobQueue()
+            queue.name = req.name
+            queue.note = req.note
+            queue.auto_enqueue = req.auto_enqueue
+            queue.owner_id = me.id
+            session.add(queue)
+            session.commit()
+            session.refresh(queue)
+            return queue
+
+    def create_job(self, queue_id: int, me: User):
+        with self.get_session() as session:
+            queue = self._query_queue(session, queue_id).first()
+            if queue is None:
+                raise err_not_found('queue', queue_id)
+            perm = self._get_queue_perm(session, queue, me)
+            if not has_perm(perm, [JobQueuePerm.OWNER, JobQueuePerm.CREATE_JOB]):
+                raise err_perm_deny()
+            # TODO: create queue
+
+    def _get_queue_perm(self, session, queue: JobQueue, me: User) -> int:
+        if queue.owner_id == me.id:
+            return JobQueuePerm.OWNER.value
+        if has_perm(me.perm, [UserPerm.ADMIN]):
+            return JobQueuePerm.OWNER.value  # system admin has the same perm as owner
+        member = session.query(JobQueueMember).filter_by(
+            queue_id=queue.id, user_id=me.id).first()
+        if member is not None:
+            return member.perm
+        return 0
+
+    def _get_queue(self, queue_id: int):
+        with self.get_session() as session:
+            queue = self._query_queue(session, queue_id).first()
+            if queue is None:
+                raise err_not_found('queue', queue_id)
+            return queue
+
+    def _query_queue(self, session, queue_id: int):
+        return session.query(JobQueue).filter_by(id=queue_id, deleted=0)
+
+    def _query_queues(self, session):
+        return session.query(JobQueue).filter_by(deleted=0)

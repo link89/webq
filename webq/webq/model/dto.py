@@ -34,4 +34,40 @@ class UpdateUserReq(CreateUserReq):
 
 
 class UserRes(UserBase):
+    class Config:
+        from_attributes = True
     id: int
+
+
+class JobQueueBase(BaseModel):
+    name: str
+    note: str = ''
+    auto_enqueue: bool = True
+
+
+class CreateJobQueueReq(JobQueueBase):
+    pass
+
+
+class JobQueueRes(JobQueueBase):
+    class Config:
+        from_attributes = True
+    id: int
+    owner_id: int
+
+
+class JobBase(BaseModel):
+    flt_str: str
+    data: dict
+    state: int
+
+class CreateJobReq(JobBase):
+    pass
+
+
+class JobRes(JobBase):
+    class Config:
+        from_attributes = True
+    id: int
+    jobq_id: int
+    owner_id: int

@@ -1,9 +1,12 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine , inspect
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 from contextlib import contextmanager
 
+from .log import get_logger
+
+logger = get_logger(__name__)
 
 Base = declarative_base()
 
@@ -16,7 +19,7 @@ class DBComponent:
     def init(self, db_url: str):
         assert db_url, "db_url is required"
         assert self.engine is None, "db is already initialized"
-        print('initializing engine:', db_url)
+        logger.info('initializing engine: %s', db_url)
         self.engine = create_engine(db_url)
         assert self.session_factory is None, "db is already initialized"
         self.session_factory = sessionmaker(

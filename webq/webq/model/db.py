@@ -1,13 +1,14 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, Text
+from sqlalchemy import Column, Integer, String, DateTime, JSON, Text, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
+
 
 from datetime import datetime
 from enum import IntEnum, IntFlag
 
 from ..db import Base
+
 # The below is constant for the database
 # You should not change it unless you know what you are doing
-
 S_SHORT = 256  # the max length of email is 254 chars
 S_LONG = 4096  # the size of page is 4KB
 
@@ -15,33 +16,38 @@ S_LONG = 4096  # the size of page is 4KB
 class UserPerm(IntFlag):
     ADMIN = 1
 
-    VIEW_USERS = 2
-    CREATE_USER = 4
-    UPDATE_USER = 8
+    VIEW_USERS = 1 << 1
+    CREATE_USER = 1 << 2
+    UPDATE_USER = 1 << 3
 
-    VIEW_JOB_QUEUES = 16
-    CREATE_JOB_QUEUE = 32
-    UPDATE_JOB_QUEUE = 64
+    VIEW_JOB_QUEUES = 1 << 4
+    CREATE_JOB_QUEUE = 1 << 5
+    UPDATE_JOB_QUEUE = 1 << 6
 
 
 class JobQueuePerm(IntFlag):
-    ADMIN = 1
+    OWNER = 1
 
-    VIEW_JOBS = 2
-    CREATE_JOB = 4
-    UPDATE_JOB = 8  # update any job in the queue
+    VIEW_JOBS = 1 << 1
+    CREATE_JOB = 1 << 2
+    UPDATE_JOB = 1 << 3
+    APPROVE_JOB = 1 << 4  # set job state to ENQUEUED or DEQUEUED
 
-    APPLY_JOB = 16
+    APPLY_JOB = 1 << 5
 
-    VIEW_COMMITS = 32
-    CREATE_COMMIT = 64
-    UPDATE_COMMIT = 128  # update any commit in the queue
+    VIEW_COMMITS = 1 << 6
+    CREATE_COMMIT = 1 << 7
+    UPDATE_COMMIT = 1 << 8
+    APPROVE_COMMIT = 1 << 9  # set commit state to ACCEPTED or REJECTED
 
 
 class JobState(IntEnum):
     # set by crowdsourcer
     DRAFT = 0
     READY = 1
+    # set by owner or supervisor
+    ENQUEUED = 2
+    DEQUEUED = 3
 
 
 class CommitState(IntEnum):
@@ -49,7 +55,7 @@ class CommitState(IntEnum):
     PENDING = 0
     ABORTED = 1
     DONE = 2
-    # set by job owner/supervisor
+    # set by job owner or supervisor
     REJECTED = 3
     ACCEPTED = 4
 
@@ -73,7 +79,7 @@ class User(Base, TimestampMixin):
     password = Column(String(S_SHORT))
     perm = Column(Integer, default=0)
     note = Column(Text, default='')
-    deleted = Column(Integer, default=0, index=True)
+    deleted = Column(Boolean, default=0, index=True)
 
 
 class Session(Base, TimestampMixin):
@@ -109,8 +115,9 @@ class JobQueue(Base, TimestampMixin):
     id = Column(Integer, primary_key=True)
     name = Column(String(S_SHORT), index=True)
     note = Column(Text, default='')
+    auto_enqueue = Column(Boolean, default=1)  # if false, job must be enqueued by owner or supervisor
 
-    deleted = Column(Integer, default=0, index=True)
+    deleted = Column(Boolean, default=0, index=True)
 
     owner_id = Column(Integer, index=True)
     owner = relationship('User',
@@ -125,7 +132,7 @@ class JobQueueMember(Base, TimestampMixin):
     id = Column(Integer, primary_key=True)
     perm = Column(Integer)
 
-    deleted = Column(Integer, default=0, index=True)
+    deleted = Column(Boolean, default=0, index=True)
 
     jobq_id = Column(Integer, index=True)
     jobq = relationship('JobQueue',
@@ -139,6 +146,12 @@ class JobQueueMember(Base, TimestampMixin):
                         primaryjoin='User.id == JobQueueMember.user_id',
                         backref='job_queue_members')
 
+    # jobq_id and user_id must be union unique
+    __table_args__ = (
+        UniqueConstraint('jobq_id', 'user_id'),
+    )
+
+
 
 class Job(Base, TimestampMixin):
     __tablename__ = 'job'
@@ -148,7 +161,7 @@ class Job(Base, TimestampMixin):
     data = Column(JSON)
     state = Column(Integer, index=True)
 
-    deleted = Column(Integer, default=0, index=True)
+    deleted = Column(Boolean, default=0, index=True)
 
     jobq_id = Column(Integer, index=True)
     jobq = relationship('JobQueue',
