@@ -10,9 +10,6 @@ from .model.dto import CreateUserReq, UpdateUserReq
 from .model.dto import err_perm_deny, err_not_found
 
 
-# TODO: use either monad for error handling
-
-
 def has_perm(perm, perm_list):
     for p in perm_list:
         if perm & p:
@@ -48,11 +45,11 @@ class DbService(Service):
 
 class AuthService(DbService):
 
-    def create_session_token(self, username: str, password: str):
+    def create_session_token(self, name: str, password: str):
         # TODO: handle session expire
         with self.get_session() as session:
             user = session.query(User).filter_by(
-                username=username, deleted=0).first()
+                name=name, deleted=0).first()
             if user is None:
                 return None
             if not bcrypt.checkpw(password.encode(), user.password.encode()):
@@ -66,9 +63,11 @@ class AuthService(DbService):
             return str(session_token.id) + '-' +  token
 
     def get_user_by_session(self, token: str):
+        # TODO: handle malformed token
         sid, token = token.split('-', maxsplit=1)
         sid = int(sid)
         token = hash_token(token)
+
         with self.get_session() as session:
             session_token = session.query(Session).filter_by(
                 id=sid, token=token).first()
@@ -101,7 +100,7 @@ class UserService(DbService):
         # TODO: password strength check
         with self.get_session() as session:
             user = User()
-            user.username = req.username
+            user.name = req.name
             user.note = req.note
             user.perm = req.perm
             user.password = bcrypt.hashpw(
@@ -134,5 +133,3 @@ class UserService(DbService):
         with self.get_session() as session:
             self._query_user(session, user_id).update({'deleted': 1})
             session.commit()
-
-

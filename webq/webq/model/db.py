@@ -69,7 +69,7 @@ class User(Base, TimestampMixin):
     __tablename__ = 'user'
 
     id = Column(Integer, primary_key=True)
-    username = Column(String(S_SHORT), unique=True)
+    name = Column(String(S_SHORT), unique=True)
     password = Column(String(S_SHORT))
     perm = Column(Integer, default=0)
     note = Column(Text, default='')

@@ -20,7 +20,7 @@ def convert_to_optional(schema):
 
 
 class UserBase(BaseModel):
-    username: str
+    name: str
     perm: int = 0
     note: str = ''
 
