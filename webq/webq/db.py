@@ -15,25 +15,16 @@ class DBComponent:
 
     def init(self, db_url: str):
         assert db_url, "db_url is required"
-        if self.engine is None:
-            print('initializing engine:', db_url)
-            self.engine = create_engine(db_url)
-        if self.session_factory is None:
-            self.session_factory = sessionmaker(
-                autocommit=False, autoflush=False, bind=self.engine)
-
-    def get_engine(self):
-        assert self.engine, "engine not initialized"
-        return self.engine
-
-    def get_session_factory(self):
-        assert self.session_factory, "session factory not initialized"
-        return self.session_factory
+        assert self.engine is None, "db is already initialized"
+        print('initializing engine:', db_url)
+        self.engine = create_engine(db_url)
+        assert self.session_factory is None, "db is already initialized"
+        self.session_factory = sessionmaker(
+            autocommit=False, autoflush=False, bind=self.engine)
 
     @contextmanager
     def get_db_session(self):
-        session_factory = self.get_session_factory()
-        db_session = session_factory()
+        db_session = self.session_factory()
         try:
             yield db_session
         finally:
@@ -43,4 +34,4 @@ class DBComponent:
         # use the side effect of importing db_model to register models
         from .model import db as db_model
         # create tables
-        Base.metadata.create_all(bind=self.get_engine())  # type: ignore
+        Base.metadata.create_all(bind=self.engine)  # type: ignore

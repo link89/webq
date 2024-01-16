@@ -6,6 +6,7 @@ def start(c: str):
 
     config.init(c)
     db.init(config.config.db_url)
+    # TODO: storage
     # TODO: run unicorn server
 
 
