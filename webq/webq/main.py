@@ -2,12 +2,19 @@ import fire
 
 
 def start(c: str):
+
+    import uvicorn
     from .context import config, db
+
 
     config.init(c)
     db.init(config.config.db_url)
     # TODO: storage
-    # TODO: run unicorn server
+    uvicorn.run("webq.app:app",
+                host=config.config.host,
+                port=config.config.port,
+                log_level=config.config.log_level,
+                )
 
 
 def db_init(c: str):

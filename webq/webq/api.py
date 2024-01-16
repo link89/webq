@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer, APIKeyHeader
+from fastapi.security import OAuth2PasswordBearer, APIKeyHeader, OAuth2PasswordRequestForm
 
 from typing import Annotated
 
@@ -8,7 +8,7 @@ from .model.dto import UserRes
 from .context import get_context, Context
 
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login", auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/login", auto_error=False)
 api_key_header = APIKeyHeader(name="x-auth-token", auto_error=False)
 
 ep_users = APIRouter(tags=['Users'])
@@ -35,3 +35,12 @@ def get_auth_user(oauth2_token: Annotated[str, Depends(oauth2_scheme)],
 @ep_users.get('/me')
 async def get_me(me: Annotated[User, Depends(get_auth_user)]) -> UserRes:
     return UserRes.from_orm(me)
+
+
+@ep_users.post('/login')
+async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+                ctx: Annotated[Context, Depends(get_context)]):
+    token = ctx.auth_service.create_session_token(form_data.username, form_data.password)
+    if token is None:
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+    return {'access_token': token, 'token_type': 'bearer'}

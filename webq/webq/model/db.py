@@ -73,6 +73,7 @@ class User(Base, TimestampMixin):
     password = Column(String(S_SHORT))
     perm = Column(Integer, default=0)
     note = Column(Text, default='')
+    deleted = Column(Integer, default=0, index=True)
 
 
 class Session(Base, TimestampMixin):
