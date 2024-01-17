@@ -1,16 +1,17 @@
-from typing import Optional
+from typing import Optional, ContextManager
 from datetime import datetime
 import bcrypt
 import secrets
 import hashlib
 
 from .model.db import (
-    User, UserToken, UserPerm, Session,
-    JobQueue, JobQueueMember, Job, JobQueuePerm, JobState,
+    User, Session,
+    JobQueue, JobQueueMember, Job,
 )
 from .model.dto import (
-    CreateUserReq, UpdateUserReq, ResetPasswordReq,
-    CreateJobQueueReq, CreateJobReq,
+    UserPerm, JobQueuePerm, JobState, CommitState,
+    CreateUserReq, UpdateUserReq,
+    CreateJobQueueReq, CreateJobReq, ApplyJobsReq,
     err_perm_deny, err_not_found, err_bad_request,
 )
 
@@ -45,7 +46,7 @@ class DbService(Service):
 
     db: DBComponent
 
-    def get_session(self):
+    def get_session(self) -> ContextManager:
         return self.db.get_db_session()
 
 
@@ -189,7 +190,7 @@ class JobQueueService(DbService):
                 raise err_perm_deny()
             is_approver = has_perm(perm, [JobQueuePerm.OWNER, JobQueuePerm.APPROVE_JOB])
             # ensure job state is valid
-            if req.state not in self._get_next_state(None, is_approver):
+            if req.state not in self._next_job_states(None, is_approver):
                 raise err_bad_request(f'invalid state {req.state}')
             # auto enqueue
             req.state = self._auto_enqueue(req.state, queue.auto_enqueue)
@@ -230,7 +231,7 @@ class JobQueueService(DbService):
 
             # ensure new job state is valid
             if 'state' in req_dict:
-                if req_dict['state'] not in self._get_next_state(job.state, is_approver):
+                if req_dict['state'] not in self._next_job_states(job.state, is_approver):
                     raise err_bad_request(f'invalid state {req.state}')
                 req_dict['state'] = self._auto_enqueue(req_dict['state'], queue.auto_enqueue)
 
@@ -240,12 +241,21 @@ class JobQueueService(DbService):
             session.refresh(job)
             return job
 
+    def apply_jobs(self, queue_id: int, req: ApplyJobsReq, me: User):
+        with self.get_session() as session:
+            # ensure queue exists
+            queue: JobQueue = self._query_queue(session, queue_id).first()
+            if queue is None:
+                raise err_not_found('queue', queue_id)
+            # ensure user has permission
+            perm = self._get_queue_perm(session, queue, me)
+            if not has_perm(perm, [JobQueuePerm.OWNER, JobQueuePerm.APPLY_JOB]):
+                raise err_perm_deny()
 
-    def apply_job(self, queue_id: int, job_id: int, me: User):
-        ...
+            # query qualified jobs, should meet all of the following conditions:
+            #   job state is ENQUEUED, and no commit exists
+            #   if flt_str is provided, use LIKE clause to match flt_str
 
-    def delete_job(self, queue_id: int, job_id: int, me: User):
-        ...
 
 
     def _get_queue_perm(self, session, queue: JobQueue, me: User) -> int:
@@ -266,16 +276,19 @@ class JobQueueService(DbService):
                 raise err_not_found('queue', queue_id)
             return queue
 
-    def _query_job(self, session, job_id: int):
-        return session.query(Job).filter_by(id=job_id, deleted=0)
-
     def _query_queue(self, session, queue_id: int):
         return session.query(JobQueue).filter_by(id=queue_id, deleted=0)
 
     def _query_queues(self, session):
         return session.query(JobQueue).filter_by(deleted=0)
 
-    def _get_next_state(self, state: Optional[int], is_approver: bool = False):
+    def _query_job(self, session, job_id: int):
+        return session.query(Job).filter_by(id=job_id, deleted=0)
+
+    def _query_jobs(self, session):
+        return session.query(Job).filter_by(deleted=0)
+
+    def _next_job_states(self, state: Optional[int], is_approver: bool = False):
         """
         validate if a job state transition is allowed
         DRAFT -> READY -> ENQUEUED or DEQUEUED

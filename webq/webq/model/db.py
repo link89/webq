@@ -1,9 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
-
-
 from datetime import datetime
-from enum import IntEnum, IntFlag
 
 from ..db import Base
 
@@ -11,53 +8,6 @@ from ..db import Base
 # You should not change it unless you know what you are doing
 S_SHORT = 256  # the max length of email is 254 chars
 S_LONG = 4096  # the size of page is 4KB
-
-
-class UserPerm(IntFlag):
-    ADMIN = 1
-
-    VIEW_USERS = 1 << 1
-    CREATE_USER = 1 << 2
-    UPDATE_USER = 1 << 3
-
-    VIEW_JOB_QUEUES = 1 << 4
-    CREATE_JOB_QUEUE = 1 << 5
-    UPDATE_JOB_QUEUE = 1 << 6
-
-
-class JobQueuePerm(IntFlag):
-    OWNER = 1
-
-    VIEW_JOBS = 1 << 1
-    CREATE_JOB = 1 << 2
-    UPDATE_JOB = 1 << 3
-    APPROVE_JOB = 1 << 4  # set job state to ENQUEUED or DEQUEUED
-
-    APPLY_JOB = 1 << 5
-
-    VIEW_COMMITS = 1 << 6
-    CREATE_COMMIT = 1 << 7
-    UPDATE_COMMIT = 1 << 8
-    APPROVE_COMMIT = 1 << 9  # set commit state to ACCEPTED or REJECTED
-
-
-class JobState(IntEnum):
-    # set by crowdsourcer
-    DRAFT = 0
-    SUBMITTED = 1
-    # set by owner or supervisor
-    ENQUEUED = 2
-    DEQUEUED = 3
-
-
-class CommitState(IntEnum):
-    # set by worker
-    PENDING = 0
-    ABORTED = 1
-    SUBMITTED = 2
-    # set by job owner or supervisor
-    REJECTED = 3
-    ACCEPTED = 4
 
 
 class TimestampMixin:

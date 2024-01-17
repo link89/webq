@@ -27,7 +27,7 @@ class DBComponent:
 
     @contextmanager
     def get_db_session(self):
-        db_session = self.session_factory()
+        db_session = self.session_factory()  # type: ignore
         try:
             yield db_session
         finally:
