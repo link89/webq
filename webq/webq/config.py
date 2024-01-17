@@ -26,7 +26,7 @@ class Config(BaseModel):
 
 
 class ConfigComponent:
-    config: Config
+    data: Config
 
     def __init__(self):
         ...
@@ -34,4 +34,4 @@ class ConfigComponent:
     def init(self, config_file: str):
         with open(config_file, encoding='utf-8') as f:
             data = yaml.load(f, Loader=yaml.FullLoader)
-            self.config = Config(**data)
+            self.data = Config(**data)

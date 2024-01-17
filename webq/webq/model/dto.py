@@ -23,6 +23,7 @@ def err_bad_request(msg='bad request'):
 def convert_to_optional(schema):
     return {k: Optional[v] for k, v in schema.__annotations__.items()}
 
+
 class UserPerm(IntFlag):
     ADMIN = 1
 
@@ -62,13 +63,12 @@ class JobState(IntEnum):
 
 class CommitState(IntEnum):
     # set by worker
-    PENDING = 0
+    DRAFT = 0
     ABORTED = 1
     SUBMITTED = 2
     # set by job owner or supervisor
     REJECTED = 3
     ACCEPTED = 4
-
 
 
 class UserBase(BaseModel):

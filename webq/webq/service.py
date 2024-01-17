@@ -1,4 +1,3 @@
-from sqlalchemy import func
 from typing import Optional, ContextManager
 from datetime import datetime
 import bcrypt
@@ -18,6 +17,7 @@ from .model.dto import (
 )
 
 from .db import DBComponent
+from .storage import IStorage
 from .log import get_logger
 
 logger = get_logger(__name__)
@@ -163,7 +163,9 @@ class UserService(DbService):
     def _query_users(self, session):
         return session.query(User).filter_by(deleted=0)
 
+
 class JobQueueService(DbService):
+    storage: IStorage
 
     def create_queue(self, req: CreateJobQueueReq, me: User):
         if not has_perm(me.perm, [UserPerm.ADMIN, UserPerm.CREATE_JOB_QUEUE]):
@@ -209,15 +211,15 @@ class JobQueueService(DbService):
             session.refresh(job)
             return job
 
-    def update_job(self, queue_id: int, job_id: int, req: CreateJobReq, me: User):
+    def update_job(self, job_id: int, req: CreateJobReq, me: User, queue_id: Optional[int] = None):
         with self.get_session() as session:
             # ensure queue and job exist
-            queue: JobQueue = self._query_queue(session, queue_id).first()
-            if queue is None:
-                raise err_not_found('queue', queue_id)
             job: Job = self._query_job(session, job_id).first()
             if job is None:
                 raise err_not_found('job', job_id)
+            if queue_id is not None and job.jobq_id != queue_id:
+                raise err_bad_request(f'job {job_id} does not belong to queue {queue_id}')
+            queue = job.jobq
 
             # ensure user has permission
             queue_perm = self._get_queue_perm(session, queue, me)
@@ -243,6 +245,13 @@ class JobQueueService(DbService):
             session.refresh(job)
             return job
 
+    def create_job_file(self, job_id: int, file_name: str, file_content: bytes, me: User, queue_id: Optional[int] = None):
+        ...
+
+    def get_job_file(self, job_id: int, file_name: str, me: User, queue_id: Optional[int] = None):
+        ...
+
+
     def apply_jobs(self, queue_id: int, req: ApplyJobsReq, me: User):
         with self.get_session() as session:
             # ensure queue exists
@@ -253,11 +262,8 @@ class JobQueueService(DbService):
             perm = self._get_queue_perm(session, queue, me)
             if not has_perm(perm, [JobQueuePerm.OWNER, JobQueuePerm.APPLY_JOB]):
                 raise err_perm_deny()
-
             # query qualified jobs
-            query = self._query_jobs(session, queue_id)
-            ## job state is ENQUEUED
-            query = query.filter_by(state=JobState.ENQUEUED.value)
+            query = self._query_jobs(session, queue_id).filter_by(state=JobState.ENQUEUED.value)
             ## if flt_str is provided, use LIKE clause to match flt_str
             flt_str = req.flt_str
             if flt_str is not None:
@@ -265,15 +271,28 @@ class JobQueueService(DbService):
                     query = query.filter(Job.flt_str.notlike(flt_str[1:]))
                 else:
                     query = query.filter(Job.flt_str.like(flt_str))
+            ## get jobs
+            jobs = query.limit(req.limit).all()
 
-            ## no commit exists
-            query = query.outerjoin(Job.commits).group_by(Job.id).having(func.count(Commit.id) == 0)
+            commits = []
+            for job in jobs:
+                # dequeue job
+                job.state = JobState.DEQUEUED.value
+                # create commit
+                commit = Commit()
+                commit.job_id = job.id
+                commit.owner_id = me.id
+                commit.state = CommitState.DRAFT.value
+                session.add(commit)
+                commits.append(commit)
+            session.commit()
+            for commit in commits:
+                session.refresh(commit)
+            return commits
 
 
-
-
-
-
+    def update_commit(self, queue_id: int, job_id: int, commit_id: int, req: CreateJobReq, me: User):
+        ...
 
 
     def _get_queue_perm(self, session, queue: JobQueue, me: User) -> int:
@@ -286,13 +305,6 @@ class JobQueueService(DbService):
         if member is not None:
             return member.perm
         return 0
-
-    def _get_queue(self, queue_id: int):
-        with self.get_session() as session:
-            queue = self._query_queue(session, queue_id).first()
-            if queue is None:
-                raise err_not_found('queue', queue_id)
-            return queue
 
     def _query_queue(self, session, queue_id: int):
         return session.query(JobQueue).filter_by(id=queue_id, deleted=0)

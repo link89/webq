@@ -2,27 +2,26 @@ import fire
 
 
 def start(c: str):
-
     import uvicorn
-    from .context import config, db
+    from .context import get_context, init
 
+    init(c)
+    ctx = get_context()
+    config = ctx.config.data
 
-    config.init(c)
-    db.init(config.config.db_url)
-    # TODO: storage
     uvicorn.run("webq.app:app",
-                host=config.config.host,
-                port=config.config.port,
-                log_level=config.config.log_level,
+                host=config.host,
+                port=config.port,
+                log_level=config.log_level,
                 )
 
 
 def db_init(c: str):
-    from .context import config, db, user_service
-    config.init(c)
-    db.init(config.config.db_url)
-    db.create_tables()
-    user_service.create_admin()
+    from .context import get_context, init
+    init(c)
+    ctx = get_context()
+    ctx.db.create_tables()
+    ctx.user_service.create_admin()
 
 
 def main():
