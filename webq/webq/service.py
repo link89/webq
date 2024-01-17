@@ -7,12 +7,17 @@ import hashlib
 
 from .model.db import (
     User, Session,
-    JobQueue, JobQueueMember, Job, Commit,
+    JobQueue, JobQueueMember,
+    Job, JobFile,
+    Commit, CommitFile,
 )
 from .model.dto import (
     UserPerm, JobQueuePerm, JobState, CommitState,
     CreateUserReq, UpdateUserReq,
-    CreateJobQueueReq, CreateJobReq, ApplyJobsReq,
+    CreateJobQueueReq,
+    CreateJobReq,
+    CreateJobFileReq,
+    ApplyJobsReq,
     err_perm_deny, err_not_found, err_bad_request,
 )
 
@@ -204,7 +209,7 @@ class JobQueueService(DbService):
             job.content = req.content
             job.content_type = req.content_type
             job.state = req.state
-            job.jobq_id = queue_id
+            job.queue_id = queue_id
             job.owner_id = me.id
             session.add(job)
             session.commit()
@@ -214,22 +219,16 @@ class JobQueueService(DbService):
     def update_job(self, job_id: int, req: CreateJobReq, me: User, queue_id: Optional[int] = None):
         with self.get_session() as session:
             # ensure queue and job exist
-            job: Job = self._query_job(session, job_id).first()
-            if job is None:
-                raise err_not_found('job', job_id)
-            if queue_id is not None and job.jobq_id != queue_id:
-                raise err_bad_request(f'job {job_id} does not belong to queue {queue_id}')
-            queue = job.jobq
-
+            job = self._get_job(session, job_id, queue_id)
+            queue = job.queue
             # ensure user has permission
             queue_perm = self._get_queue_perm(session, queue, me)
             if job.owner_id != me.id and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_JOB]):
                 raise err_perm_deny()
             is_approver = has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.APPROVE_JOB])
-
-            req_dict = req.dict(exclude_unset=True)
             # if current state is not draft, only allow state change
-            if job.state != JobState.DRAFT.value:
+            req_dict = req.dict(exclude_unset=True)
+            if job.state != JobState.DRAFT:
                 if 'state' not in req_dict or len(req_dict) != 1:
                     raise err_bad_request('only state can be updated for non-draft job')
 
@@ -245,8 +244,31 @@ class JobQueueService(DbService):
             session.refresh(job)
             return job
 
-    def create_job_file(self, job_id: int, file_name: str, file_content: bytes, me: User, queue_id: Optional[int] = None):
-        ...
+    def create_job_file(self, job_id: int, req: CreateJobFileReq, me: User, queue_id: Optional[int] = None):
+        with self.get_session() as session:
+            # ensure job and queue exist
+            job = self._get_job(session, job_id, queue_id)
+            queue = job.queue
+            # ensure job state is valid
+            if job.state != JobState.DRAFT:
+                raise err_bad_request(f'forbid upload due to job {job_id} is not in draft state')
+
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(session, queue, me)
+            if job.owner_id != me.id and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_JOB]):
+                raise err_perm_deny()
+
+            # create job file
+            job_file = JobFile()
+            job_file.job_id = job_id
+            job_file.prefix = req.prefix
+
+            # TODO: generate job upload url
+            session.add(job_file)
+            session.commit()
+            session.refresh(job_file)
+            return job_file
+
 
     def get_job_file(self, job_id: int, file_name: str, me: User, queue_id: Optional[int] = None):
         ...
@@ -294,6 +316,13 @@ class JobQueueService(DbService):
     def update_commit(self, queue_id: int, job_id: int, commit_id: int, req: CreateJobReq, me: User):
         ...
 
+    def _get_job(self, session, job_id: int, queue_id: Optional[int]):
+        job: Job = self._query_job(session, job_id).first()
+        if job is None:
+            raise err_not_found('job', job_id)
+        if queue_id is not None and job.queue_id != queue_id:
+            raise err_bad_request(f'job {job_id} does not belong to queue {queue_id}')
+        return job
 
     def _get_queue_perm(self, session, queue: JobQueue, me: User) -> int:
         if queue.owner_id == me.id:
@@ -316,7 +345,7 @@ class JobQueueService(DbService):
         return session.query(Job).filter_by(id=job_id, deleted=0)
 
     def _query_jobs(self, session, queue_id: int):
-        return session.query(Job).filter_by(jobq_id=queue_id, deleted=0)
+        return session.query(Job).filter_by(queue_id=queue_id, deleted=0)
 
     def _next_job_states(self, state: Optional[int], is_approver: bool = False):
         """

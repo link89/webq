@@ -18,7 +18,7 @@ class TimestampMixin:
 class FileMixin:
     id = Column(Integer, primary_key=True)
     prefix = Column(String(S_LONG))
-    url = Column(String(S_LONG))
+    type = Column(String(S_SHORT))
 
 
 class User(Base, TimestampMixin):
@@ -83,10 +83,10 @@ class JobQueueMember(Base, TimestampMixin):
 
     deleted = Column(Boolean, default=0, index=True)
 
-    jobq_id = Column(Integer, index=True)
-    jobq = relationship('JobQueue',
-                        foreign_keys=[jobq_id],
-                        primaryjoin='JobQueue.id == JobQueueMember.jobq_id',
+    queue_id = Column(Integer, index=True)
+    queue = relationship('JobQueue',
+                        foreign_keys=[queue_id],
+                        primaryjoin='JobQueue.id == JobQueueMember.queue_id',
                         backref='members')
 
     user_id = Column(Integer, index=True)
@@ -95,9 +95,9 @@ class JobQueueMember(Base, TimestampMixin):
                         primaryjoin='User.id == JobQueueMember.user_id',
                         backref='job_queue_members')
 
-    # jobq_id and user_id must be union unique
+    # queue_id and user_id must be union unique
     __table_args__ = (
-        UniqueConstraint('jobq_id', 'user_id'),
+        UniqueConstraint('queue_id', 'user_id'),
     )
 
 
@@ -113,10 +113,10 @@ class Job(Base, TimestampMixin):
     state = Column(Integer, index=True)
     deleted = Column(Boolean, default=0, index=True)
 
-    jobq_id = Column(Integer, index=True)
-    jobq = relationship('JobQueue',
-                        foreign_keys=[jobq_id],
-                        primaryjoin='JobQueue.id == Job.jobq_id',
+    queue_id = Column(Integer, index=True)
+    queue = relationship('JobQueue',
+                        foreign_keys=[queue_id],
+                        primaryjoin='JobQueue.id == Job.queue_id',
                         backref='jobs')
 
     owner_id = Column(Integer, index=True)

@@ -133,8 +133,25 @@ class JobRes(JobBase):
     class Config:
         from_attributes = True
     id: int
-    jobq_id: int
+    queue_id: int
     owner_id: int
+
+
+class JobFileBase(BaseModel):
+    prefix: str
+    content_type: str = ''
+
+
+class CreateJobFileReq(JobFileBase):
+    pass
+
+
+class JobFileRes(JobFileBase):
+    class Config:
+        from_attributes = True
+    id: int
+    job_id: int
+    upload_url: str
 
 
 class ApplyJobsReq(BaseModel):
