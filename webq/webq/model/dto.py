@@ -15,6 +15,10 @@ def err_not_found(obj_name, obj_id):
     return HTTPException(status_code=404, detail=f'{obj_name} {obj_id} not found')
 
 
+def err_bad_request(msg='bad request'):
+    return HTTPException(status_code=400, detail=msg)
+
+
 def convert_to_optional(schema):
     return {k: Optional[v] for k, v in schema.__annotations__.items()}
 
@@ -29,8 +33,14 @@ class CreateUserReq(UserBase):
     password: str
 
 
-class UpdateUserReq(CreateUserReq):
-    __annotations__ = convert_to_optional(CreateUserReq)
+class UpdateUserReq(BaseModel):
+    perm: Optional[int] = None
+    note: Optional[str] = None
+
+
+class ResetPasswordReq(BaseModel):
+    new: str
+    old: Optional[str]
 
 
 class UserRes(UserBase):
@@ -57,11 +67,17 @@ class JobQueueRes(JobQueueBase):
 
 
 class JobBase(BaseModel):
-    flt_str: str
-    data: dict
-    state: int
+    flt_str: str = ''
+    content: str = ''
+    content_type: str = ''
+    state: int = 0
+
 
 class CreateJobReq(JobBase):
+    pass
+
+
+class UpdateJobReq(JobBase):
     pass
 
 

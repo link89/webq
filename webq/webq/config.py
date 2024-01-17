@@ -35,4 +35,3 @@ class ConfigComponent:
         with open(config_file, encoding='utf-8') as f:
             data = yaml.load(f, Loader=yaml.FullLoader)
             self.config = Config(**data)
-

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, Text, Boolean, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 
@@ -44,7 +44,7 @@ class JobQueuePerm(IntFlag):
 class JobState(IntEnum):
     # set by crowdsourcer
     DRAFT = 0
-    READY = 1
+    SUBMITTED = 1
     # set by owner or supervisor
     ENQUEUED = 2
     DEQUEUED = 3
@@ -54,7 +54,7 @@ class CommitState(IntEnum):
     # set by worker
     PENDING = 0
     ABORTED = 1
-    DONE = 2
+    SUBMITTED = 2
     # set by job owner or supervisor
     REJECTED = 3
     ACCEPTED = 4
@@ -115,8 +115,7 @@ class JobQueue(Base, TimestampMixin):
     id = Column(Integer, primary_key=True)
     name = Column(String(S_SHORT), index=True)
     note = Column(Text, default='')
-    auto_enqueue = Column(Boolean, default=1)  # if false, job must be enqueued by owner or supervisor
-
+    auto_enqueue = Column(Boolean, default=1)
     deleted = Column(Boolean, default=0, index=True)
 
     owner_id = Column(Integer, index=True)
@@ -152,15 +151,16 @@ class JobQueueMember(Base, TimestampMixin):
     )
 
 
-
 class Job(Base, TimestampMixin):
     __tablename__ = 'job'
     id = Column(Integer, primary_key=True)
 
     flt_str = Column(String, index=True)
-    data = Column(JSON)
-    state = Column(Integer, index=True)
 
+    content = Column(Text)
+    content_type = Column(String(S_SHORT))
+
+    state = Column(Integer, index=True)
     deleted = Column(Boolean, default=0, index=True)
 
     jobq_id = Column(Integer, index=True)
@@ -184,15 +184,19 @@ class JobFile(Base, FileMixin):
                        foreign_keys=[job_id],
                        primaryjoin='Job.id == JobFile.job_id',
                        backref='files')
+    __table_args__ = (
+        UniqueConstraint('job_id', 'prefix'),
+    )
 
 
 class Commit(Base, TimestampMixin):
     __tablename__ = 'commit'
 
     id = Column(Integer, primary_key=True)
-
-    data = Column(JSON)
     state = Column(Integer, index=True)
+
+    content = Column(Text)
+    content_type = Column(String(S_SHORT))
 
     job_id = Column(Integer, index=True)
     job = relationship('Job',
@@ -215,3 +219,6 @@ class CommitFile(Base, FileMixin):
                           foreign_keys=[commit_id],
                           primaryjoin='Commit.id == CommitFile.commit_id',
                           backref='files')
+    __table_args__ = (
+        UniqueConstraint('commit_id', 'prefix'),
+    )
