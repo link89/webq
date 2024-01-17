@@ -1,12 +1,14 @@
+from sqlalchemy import func
 from typing import Optional, ContextManager
 from datetime import datetime
 import bcrypt
 import secrets
 import hashlib
 
+
 from .model.db import (
     User, Session,
-    JobQueue, JobQueueMember, Job,
+    JobQueue, JobQueueMember, Job, Commit,
 )
 from .model.dto import (
     UserPerm, JobQueuePerm, JobState, CommitState,
@@ -252,9 +254,25 @@ class JobQueueService(DbService):
             if not has_perm(perm, [JobQueuePerm.OWNER, JobQueuePerm.APPLY_JOB]):
                 raise err_perm_deny()
 
-            # query qualified jobs, should meet all of the following conditions:
-            #   job state is ENQUEUED, and no commit exists
-            #   if flt_str is provided, use LIKE clause to match flt_str
+            # query qualified jobs
+            query = self._query_jobs(session, queue_id)
+            ## job state is ENQUEUED
+            query = query.filter_by(state=JobState.ENQUEUED.value)
+            ## if flt_str is provided, use LIKE clause to match flt_str
+            flt_str = req.flt_str
+            if flt_str is not None:
+                if flt_str.startswith('!'):
+                    query = query.filter(Job.flt_str.notlike(flt_str[1:]))
+                else:
+                    query = query.filter(Job.flt_str.like(flt_str))
+
+            ## no commit exists
+            query = query.outerjoin(Job.commits).group_by(Job.id).having(func.count(Commit.id) == 0)
+
+
+
+
+
 
 
 
@@ -285,8 +303,8 @@ class JobQueueService(DbService):
     def _query_job(self, session, job_id: int):
         return session.query(Job).filter_by(id=job_id, deleted=0)
 
-    def _query_jobs(self, session):
-        return session.query(Job).filter_by(deleted=0)
+    def _query_jobs(self, session, queue_id: int):
+        return session.query(Job).filter_by(jobq_id=queue_id, deleted=0)
 
     def _next_job_states(self, state: Optional[int], is_approver: bool = False):
         """

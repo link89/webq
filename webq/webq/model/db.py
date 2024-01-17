@@ -125,7 +125,6 @@ class Job(Base, TimestampMixin):
                          primaryjoin='User.id == Job.owner_id',
                          backref='jobs')
 
-
 class JobFile(Base, FileMixin):
     __tablename__ = 'job_file'
 
