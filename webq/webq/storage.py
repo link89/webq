@@ -46,6 +46,7 @@ class FsStorage(IStorage):
         async with aiof.open(path, 'rb') as f:
             return await f.read()
 
+
 class S3Config(BaseModel):
     access_key: str
     secret_key: str

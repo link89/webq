@@ -139,7 +139,8 @@ class JobRes(JobBase):
 
 class JobFileBase(BaseModel):
     prefix: str
-    content_type: str = ''
+    type: str = ''
+    uploaded: bool = False
 
 
 class CreateJobFileReq(JobFileBase):
@@ -151,7 +152,6 @@ class JobFileRes(JobFileBase):
         from_attributes = True
     id: int
     job_id: int
-    upload_url: str
 
 
 class ApplyJobsReq(BaseModel):
@@ -159,6 +159,35 @@ class ApplyJobsReq(BaseModel):
     limit: int = 1
 
 
-class UpdateCommitReq(BaseModel):
-    state: Optional[int] = None
-    note: Optional[str] = None
+class CommitBase(BaseModel):
+    content: str = ''
+    content_type: str = ''
+    state: int = 0
+
+
+class UpdateCommitReq(CommitBase):
+    pass
+
+
+class CommitRes(CommitBase):
+    class Config:
+        from_attributes = True
+    id: int
+    job_id: int
+
+
+class CommitFileBase(BaseModel):
+    prefix: str
+    type: str = ''
+
+
+class CreateCommitFileReq(CommitFileBase):
+    pass
+
+
+class CommitFileRes(CommitFileBase):
+    class Config:
+        from_attributes = True
+    id: int
+    commit_id: int
+

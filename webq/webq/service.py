@@ -18,9 +18,9 @@ from .model.dto import (
     UserPerm, JobQueuePerm, JobState, CommitState,
     CreateUserReq, UpdateUserReq,
     CreateJobQueueReq,
-    CreateJobReq,
-    CreateJobFileReq,
+    CreateJobReq, UpdateJobReq, CreateJobFileReq,
     ApplyJobsReq,
+    UpdateCommitReq, CreateCommitFileReq,
     err_perm_deny, err_not_found, err_bad_request,
 )
 
@@ -232,7 +232,7 @@ class JobQueueService(DbService):
                 raise err_perm_deny()
             return job
 
-    def update_job(self, job_id: int, req: CreateJobReq, me: User, queue_id: Optional[int] = None):
+    def update_job(self, job_id: int, req: UpdateJobReq, me: User, queue_id: Optional[int] = None):
         with self.get_session() as session:
             job = self._get_job(session, job_id, queue_id)
             # ensure user has permission
@@ -273,7 +273,7 @@ class JobQueueService(DbService):
 
             job_file = JobFile()
             job_file.prefix = req.prefix
-            job_file.type = req.content_type
+            job_file.type = req.type
             job_file.job_id = job_id
 
             session.add(job_file)
@@ -281,7 +281,8 @@ class JobQueueService(DbService):
             session.refresh(job_file)
             return job_file
 
-    async def upload_job_file(self, file_id: int, file: UploadFile, me: User, job_id: int, queue_id: int):
+    async def upload_job_file(self, file_id: int, file: UploadFile, me: User,
+                              job_id: int, queue_id: int):
         if not self.storage.is_local():
             raise err_bad_request('upload is not supported for non-local storage')
 
@@ -325,7 +326,8 @@ class JobQueueService(DbService):
                                            job_id=job_file.job_id)
         await self.storage.get_upload_url(prefix)
 
-    async def dowload_job_file(self, file_id: int, me: User, job_id: Optional[int], queue_id: Optional[int] = None):
+    async def download_job_file(self, file_id: int, me: User,
+                               job_id: int, queue_id: int):
         url, content = None, None
         with self.get_session() as session:
             job_file = self._get_job_file(session, file_id, job_id=job_id, queue_id=queue_id)
@@ -335,8 +337,8 @@ class JobQueueService(DbService):
                     and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.VIEW_JOB]):
                 raise err_perm_deny()
             prefix = self._get_full_prefix(job_file.prefix,
-                                           queue_id=job_file.job.queue_id,
-                                           job_id=job_file.job_id)
+                                           queue_id=queue_id,
+                                           job_id=job_id)
         if self.storage.is_local():
             content = await self.storage.get_file_content(prefix)
         else:
@@ -380,7 +382,8 @@ class JobQueueService(DbService):
                 session.refresh(commit)
             return commits
 
-    def update_commit(self, queue_id: int, job_id: int, commit_id: int, req: CreateJobReq, me: User):
+    def update_commit(self, commit_id: int, req: UpdateCommitReq, me: User,
+                      queue_id: int, job_id: int):
         with self.get_session() as session:
             commit = self._get_commit(session, commit_id, job_id, queue_id)
             # ensure user has permission
@@ -407,8 +410,8 @@ class JobQueueService(DbService):
     def delete_commit(self):
         ...
 
-    def create_commit_file(self, commit_id: int, req: CreateJobFileReq, me: User,
-                           job_id: Optional[int], queue_id: Optional[int]):
+    def create_commit_file(self, commit_id: int, req: CreateCommitFileReq, me: User,
+                           job_id: int, queue_id: int):
         req.prefix = self._formalize_prefix(req.prefix)
         with self.get_session() as session:
             # ensure commit and job exist
@@ -424,7 +427,7 @@ class JobQueueService(DbService):
 
             commit_file = CommitFile()
             commit_file.prefix = req.prefix
-            commit_file.type = req.content_type
+            commit_file.type = req.type
             commit_file.commit_id = commit_id
 
             session.add(commit_file)
@@ -433,7 +436,7 @@ class JobQueueService(DbService):
             return commit_file
 
     async def upload_commit_file(self, file_id: int, file: UploadFile, me: User,
-                           commit_id: int, job_id: Optional[int], queue_id: Optional[int]):
+                           commit_id: int, job_id: int, queue_id: int):
         if not self.storage.is_local():
             raise err_bad_request('upload is not supported for non-local storage')
 
@@ -449,8 +452,8 @@ class JobQueueService(DbService):
                 raise err_perm_deny()
             # save file
             prefix = self._get_full_prefix(commit_file.prefix,
-                                           queue_id=commit_file.commit.job.queue_id,
-                                           job_id=commit_file.commit.job_id,
+                                           queue_id=queue_id,
+                                           job_id=job_id,
                                            commit_id=commit_file.commit_id)
             await self.storage.save_file(prefix, await file.read())
             if commit_file.type is None:
@@ -461,7 +464,7 @@ class JobQueueService(DbService):
             return commit_file
 
     async def get_commit_file_upload_url(self, file_id: int, me: User,
-                                         commit_id: Optional[int], job_id: Optional[int], queue_id: Optional[int]):
+                                         commit_id: int, job_id: int, queue_id: int):
         if not self.storage.is_local():
             raise err_bad_request('upload directly for non-local storage')
 
@@ -479,13 +482,13 @@ class JobQueueService(DbService):
                     and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_COMMIT]):
                 raise err_perm_deny()
             prefix = self._get_full_prefix(commit_file.prefix,
-                                           queue_id=commit_file.commit.job.queue_id,
-                                           job_id=commit_file.commit.job_id,
-                                           commit_id=commit_file.commit_id)
+                                           queue_id=queue_id,
+                                           job_id=job_id,
+                                           commit_id=commit_id)
         await self.storage.get_upload_url(prefix)
 
-    async def dowload_commit_file(self, file_id: int, me: User,
-                                  commit_id: Optional[int], job_id: Optional[int], queue_id: Optional[int] = None):
+    async def download_commit_file(self, file_id: int, me: User,
+                                   commit_id: int, job_id: int, queue_id: int):
         url, content = None, None
         with self.get_session() as session:
             commit_file = self._get_commit_file(
@@ -497,9 +500,9 @@ class JobQueueService(DbService):
                     and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.VIEW_COMMIT]):
                 raise err_perm_deny()
             prefix = self._get_full_prefix(commit_file.prefix,
-                                           queue_id=commit_file.commit.job.queue_id,
-                                           job_id=commit_file.commit.job_id,
-                                           commit_id=commit_file.commit_id)
+                                           queue_id=queue_id,
+                                           job_id=job_id,
+                                           commit_id=commit_id)
         if self.storage.is_local():
             content = await self.storage.get_file_content(prefix)
         else:

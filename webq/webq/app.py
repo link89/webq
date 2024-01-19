@@ -1,11 +1,12 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, APIRouter
 
 from .api import auth_apis, user_apis, job_queue_apis
 
 app = FastAPI()
 
-api_version = '/api/v1'
+base_router = APIRouter(prefix='/api/v1')
+base_router.include_router(auth_apis)
+base_router.include_router(user_apis)
+base_router.include_router(job_queue_apis)
 
-app.include_router(auth_apis, prefix='/api/v1')
-app.include_router(user_apis, prefix='/api/v1')
-app.include_router(job_queue_apis, prefix='/api/v1')
+app.include_router(base_router)
