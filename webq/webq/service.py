@@ -1,8 +1,11 @@
+from fastapi import UploadFile
 from typing import Optional, ContextManager
 from datetime import datetime
 import bcrypt
 import secrets
 import hashlib
+import os
+import re
 
 
 from .model.db import (
@@ -27,13 +30,14 @@ from .log import get_logger
 
 logger = get_logger(__name__)
 
+# TODO: refactor the permission handling in service layer
+# TODO: investigate permission management framework like oso
 
 def has_perm(perm, perm_list):
     for p in perm_list:
         if perm & p:
             return True
     return False
-
 
 def gen_token():
     return secrets.token_urlsafe(32)
@@ -216,14 +220,27 @@ class JobQueueService(DbService):
             session.refresh(job)
             return job
 
+
+    def get_job(self, job_id: int, me: User, queue_id: Optional[int] = None):
+        with self.get_session() as session:
+            # ensure queue and job exist
+            job = self._get_job(session, job_id, queue_id)
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(session, job.queue, me)
+            if job.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.VIEW_JOB]) \
+                    and session.query(Commit).filter_by(job_id=job_id, owner_id=me.id).first() is None:
+                raise err_perm_deny()
+            return job
+
     def update_job(self, job_id: int, req: CreateJobReq, me: User, queue_id: Optional[int] = None):
         with self.get_session() as session:
             # ensure queue and job exist
             job = self._get_job(session, job_id, queue_id)
-            queue = job.queue
             # ensure user has permission
-            queue_perm = self._get_queue_perm(session, queue, me)
-            if job.owner_id != me.id and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_JOB]):
+            queue_perm = self._get_queue_perm(session, job.queue, me)
+            if job.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_JOB]):
                 raise err_perm_deny()
             is_approver = has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.APPROVE_JOB])
             # if current state is not draft, only allow state change
@@ -231,13 +248,11 @@ class JobQueueService(DbService):
             if job.state != JobState.DRAFT:
                 if 'state' not in req_dict or len(req_dict) != 1:
                     raise err_bad_request('only state can be updated for non-draft job')
-
             # ensure new job state is valid
             if 'state' in req_dict:
                 if req_dict['state'] not in self._next_job_states(job.state, is_approver):
                     raise err_bad_request(f'invalid state {req.state}')
-                req_dict['state'] = self._auto_enqueue(req_dict['state'], queue.auto_enqueue)
-
+                req_dict['state'] = self._auto_enqueue(req_dict['state'], job.queue.auto_enqueue)
             # update job
             self._query_job(session, job_id).update(req_dict)
             session.commit()
@@ -245,34 +260,69 @@ class JobQueueService(DbService):
             return job
 
     def create_job_file(self, job_id: int, req: CreateJobFileReq, me: User, queue_id: Optional[int] = None):
+        req.prefix = self._formalize_prefix(req.prefix)
         with self.get_session() as session:
             # ensure job and queue exist
             job = self._get_job(session, job_id, queue_id)
-            queue = job.queue
             # ensure job state is valid
             if job.state != JobState.DRAFT:
-                raise err_bad_request(f'forbid upload due to job {job_id} is not in draft state')
-
+                raise err_bad_request(f'forbid file create as job {job_id} is not in draft state')
             # ensure user has permission
-            queue_perm = self._get_queue_perm(session, queue, me)
-            if job.owner_id != me.id and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_JOB]):
+            queue_perm = self._get_queue_perm(session, job.queue, me)
+            if job.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_JOB]):
                 raise err_perm_deny()
 
-            # create job file
             job_file = JobFile()
-            job_file.job_id = job_id
             job_file.prefix = req.prefix
+            job_file.type = req.content_type
+            job_file.job_id = job_id
 
-            # TODO: generate job upload url
             session.add(job_file)
             session.commit()
             session.refresh(job_file)
             return job_file
 
+    # FIXME : this method should be async or else it will block the event loop
+    async def upload_job_file(self, file_id: int, file: UploadFile, me: User, job_id: int, queue_id: int):
+        if not self.storage.is_local():
+            raise err_bad_request('upload is not supported for non-local storage')
 
-    def get_job_file(self, job_id: int, file_name: str, me: User, queue_id: Optional[int] = None):
-        ...
+        with self.get_session() as session:
+            job_file = self._get_job_file(session, file_id, job_id=job_id, queue_id=queue_id)
+            # ensure job state is valid
+            if job_file.job.state != JobState.DRAFT:
+                raise err_bad_request(f'forbid file upload: state of job {job_id} {JobState(job_file.job.state)} is not DRAFT')
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(session, job_file.job.queue, me)
+            if job_file.job.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_JOB]):
+                raise err_perm_deny()
+            # save file
+            prefix = self._get_full_prefix(job_file.prefix, queue_id=queue_id, job_id=job_id)
+            # FIXME: use stream pipe to create file
+            await self.storage.create_file(prefix, await file.read())
+            if job_file.type is None:
+                job_file.type = file.content_type
+            job_file.uploaded = 1
+            session.commit()
+            session.refresh(job_file)
+            return job_file
 
+
+    def get_job_file_upload_url(self):
+        if not self.storage.is_local():
+            raise err_bad_request('upload directly for non-local storage')
+        # TODO: generate a url to upload file
+
+
+
+
+    def dowload_job_file(self, job_id: int, file_id: int, me: User, queue_id: Optional[int] = None):
+        if self.storage.is_local():
+            ...  # TODO: get bytes object from storage
+        else:
+            ...  # TODO: get download url from storage and 302 redirect
 
     def apply_jobs(self, queue_id: int, req: ApplyJobsReq, me: User):
         with self.get_session() as session:
@@ -295,7 +345,6 @@ class JobQueueService(DbService):
                     query = query.filter(Job.flt_str.like(flt_str))
             ## get jobs
             jobs = query.limit(req.limit).all()
-
             commits = []
             for job in jobs:
                 # dequeue job
@@ -312,11 +361,30 @@ class JobQueueService(DbService):
                 session.refresh(commit)
             return commits
 
-
     def update_commit(self, queue_id: int, job_id: int, commit_id: int, req: CreateJobReq, me: User):
         ...
 
-    def _get_job(self, session, job_id: int, queue_id: Optional[int]):
+    def delete_commit(self):
+        ...
+
+    def create_commit_file(self):
+        ...
+
+    def upload_commit_file(self):
+        ...
+
+
+    def _get_job_file(self, session, file_id: int, job_id: Optional[int], queue_id: Optional[int]) -> JobFile:
+        job_file: JobFile = session.query(JobFile).filter_by(id=file_id).first()
+        if job_file is None:
+            raise err_not_found('job_file', file_id)
+        if job_id is not None and job_file.job_id != job_id:
+            raise err_bad_request(f'file {file_id} does not belong to job {job_id}')
+        if queue_id is not None and job_file.job.queue_id != queue_id:
+            raise err_bad_request(f'job {job_file.job_id} does not belong to queue {queue_id}')
+        return job_file
+
+    def _get_job(self, session, job_id: int, queue_id: Optional[int]) -> Job:
         job: Job = self._query_job(session, job_id).first()
         if job is None:
             raise err_not_found('job', job_id)
@@ -362,3 +430,20 @@ class JobQueueService(DbService):
         if state == JobState.SUBMITTED and auto_enqueue:
             return JobState.ENQUEUED.value
         return state
+
+    def _get_full_prefix(self, prefix: str, queue_id: int, job_id: int, commit_id: Optional[int] = None):
+        path = f'job-queue/{queue_id}/job/{job_id}'
+        if commit_id is not None:
+            path += f'/commit/{commit_id}'
+        return os.path.join(path, prefix)
+
+    def _formalize_prefix(self, prefix: str):
+        prefix = prefix.strip(' /')
+        if not prefix:
+            raise err_bad_request(f'invalid prefix {prefix}: empty path')
+        for token in prefix.split('/'):
+            if not token.strip(' .'):
+                raise err_bad_request(f'invalid token in prefix: {token}')
+            if not re.fullmatch(r'[a-zA-Z0-9_\.\-]+', token):
+                raise err_bad_request(f'invalid token in prefix: {token}')
+        return prefix

@@ -7,12 +7,13 @@ def start(c: str):
 
     init(c)
     ctx = get_context()
-    config = ctx.config.data
+    config = ctx.config
+    host, port = config.get_host_port()
 
     uvicorn.run("webq.app:app",
-                host=config.host,
-                port=config.port,
-                log_level=config.log_level,
+                host=host,
+                port=port,
+                log_level=config.data.log_level,
                 )
 
 

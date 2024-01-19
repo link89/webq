@@ -19,6 +19,7 @@ class FileMixin:
     id = Column(Integer, primary_key=True)
     prefix = Column(String(S_LONG))
     type = Column(String(S_SHORT))
+    uploaded = Column(Boolean, default=0)
 
 
 class User(Base, TimestampMixin):

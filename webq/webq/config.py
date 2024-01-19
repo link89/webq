@@ -1,5 +1,6 @@
 from typing import Optional
 from pydantic import BaseModel  # pylint: disable=no-name-in-module
+import urllib.parse
 import yaml
 
 
@@ -17,12 +18,13 @@ class Storage(BaseModel):
 
 
 class Config(BaseModel):
-    host: str = 'localhost'
-    port: int = 5000
+    base_url: str = 'http://localhost:5000'
+    proxy_base_url : Optional[str] = None
     log_level: str = 'info'
 
     db_url: str = 'sqlite:///./webq.sqlite3'
     storage: Storage = Storage()
+
 
 
 class ConfigComponent:
@@ -35,3 +37,15 @@ class ConfigComponent:
         with open(config_file, encoding='utf-8') as f:
             data = yaml.load(f, Loader=yaml.FullLoader)
             self.data = Config(**data)
+
+    def get_host_port(self):
+        # parse url
+        url = urllib.parse.urlparse(self.data.base_url)
+        assert url.scheme == 'http', 'only http is supported'
+        assert url.hostname, 'hostname is required'
+        return url.hostname, url.port or 80
+
+    def get_resource_base_url(self):
+        if self.data.proxy_base_url:
+            return self.data.proxy_base_url
+        return self.data.base_url

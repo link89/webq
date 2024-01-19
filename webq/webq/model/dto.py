@@ -39,14 +39,14 @@ class UserPerm(IntFlag):
 class JobQueuePerm(IntFlag):
     OWNER = 1
 
-    VIEW_JOBS = 1 << 1
+    VIEW_JOB = 1 << 1
     CREATE_JOB = 1 << 2
     UPDATE_JOB = 1 << 3
     APPROVE_JOB = 1 << 4  # set job state to ENQUEUED or DEQUEUED
 
     APPLY_JOB = 1 << 5
 
-    VIEW_COMMITS = 1 << 6
+    VIEW_COMMIT = 1 << 6
     CREATE_COMMIT = 1 << 7
     UPDATE_COMMIT = 1 << 8
     APPROVE_COMMIT = 1 << 9  # set commit state to ACCEPTED or REJECTED
@@ -157,3 +157,8 @@ class JobFileRes(JobFileBase):
 class ApplyJobsReq(BaseModel):
     flt_str: Optional[str] = None
     limit: int = 1
+
+
+class UpdateCommitReq(BaseModel):
+    state: Optional[int] = None
+    note: Optional[str] = None
