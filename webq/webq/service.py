@@ -220,7 +220,6 @@ class JobQueueService(DbService):
             session.refresh(job)
             return job
 
-
     def get_job(self, job_id: int, me: User, queue_id: Optional[int] = None):
         with self.get_session() as session:
             # ensure queue and job exist
@@ -235,7 +234,6 @@ class JobQueueService(DbService):
 
     def update_job(self, job_id: int, req: CreateJobReq, me: User, queue_id: Optional[int] = None):
         with self.get_session() as session:
-            # ensure queue and job exist
             job = self._get_job(session, job_id, queue_id)
             # ensure user has permission
             queue_perm = self._get_queue_perm(session, job.queue, me)
@@ -283,7 +281,6 @@ class JobQueueService(DbService):
             session.refresh(job_file)
             return job_file
 
-    # FIXME : this method should be async or else it will block the event loop
     async def upload_job_file(self, file_id: int, file: UploadFile, me: User, job_id: int, queue_id: int):
         if not self.storage.is_local():
             raise err_bad_request('upload is not supported for non-local storage')
@@ -300,8 +297,8 @@ class JobQueueService(DbService):
                 raise err_perm_deny()
             # save file
             prefix = self._get_full_prefix(job_file.prefix, queue_id=queue_id, job_id=job_id)
-            # FIXME: use stream pipe to create file
-            await self.storage.create_file(prefix, await file.read())
+            # TODO: write stream would be better
+            await self.storage.save_file(prefix, await file.read())
             if job_file.type is None:
                 job_file.type = file.content_type
             job_file.uploaded = 1
@@ -309,20 +306,42 @@ class JobQueueService(DbService):
             session.refresh(job_file)
             return job_file
 
-
-    def get_job_file_upload_url(self):
+    async def get_job_file_upload_url(self, file_id: int, me: User, job_id: Optional[int], queue_id: Optional[int]):
         if not self.storage.is_local():
             raise err_bad_request('upload directly for non-local storage')
-        # TODO: generate a url to upload file
 
+        with self.get_session() as session:
+            job_file = self._get_job_file(session, file_id, job_id=job_id, queue_id=queue_id)
+            # ensure job state is valid
+            if job_file.job.state != JobState.DRAFT:
+                raise err_bad_request(f'forbid file upload: state of job {job_id} {JobState(job_file.job.state)} is not DRAFT')
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(session, job_file.job.queue, me)
+            if job_file.job.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_JOB]):
+                raise err_perm_deny()
+            prefix = self._get_full_prefix(job_file.prefix,
+                                           queue_id=job_file.job.queue_id,
+                                           job_id=job_file.job_id)
+        await self.storage.get_upload_url(prefix)
 
-
-
-    def dowload_job_file(self, job_id: int, file_id: int, me: User, queue_id: Optional[int] = None):
+    async def dowload_job_file(self, file_id: int, me: User, job_id: Optional[int], queue_id: Optional[int] = None):
+        url, content = None, None
+        with self.get_session() as session:
+            job_file = self._get_job_file(session, file_id, job_id=job_id, queue_id=queue_id)
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(session, job_file.job.queue, me)
+            if job_file.job.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.VIEW_JOB]):
+                raise err_perm_deny()
+            prefix = self._get_full_prefix(job_file.prefix,
+                                           queue_id=job_file.job.queue_id,
+                                           job_id=job_file.job_id)
         if self.storage.is_local():
-            ...  # TODO: get bytes object from storage
+            content = await self.storage.get_file_content(prefix)
         else:
-            ...  # TODO: get download url from storage and 302 redirect
+            url = await self.storage.get_download_url(prefix)
+        return url, content
 
     def apply_jobs(self, queue_id: int, req: ApplyJobsReq, me: User):
         with self.get_session() as session:
@@ -362,17 +381,153 @@ class JobQueueService(DbService):
             return commits
 
     def update_commit(self, queue_id: int, job_id: int, commit_id: int, req: CreateJobReq, me: User):
-        ...
+        with self.get_session() as session:
+            commit = self._get_commit(session, commit_id, job_id, queue_id)
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(session, commit.job.queue, me)
+            if commit.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_COMMIT]):
+                raise err_perm_deny()
+            is_approver = has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.APPROVE_COMMIT])
+            # if current state is not draft, only allow state change
+            req_dict = req.dict(exclude_unset=True)
+            if commit.state != CommitState.DRAFT:
+                if 'state' not in req_dict or len(req_dict) != 1:
+                    raise err_bad_request('only state can be updated for non-draft commit')
+            # ensure new commit state is valid
+            if 'state' in req_dict:
+                if req_dict['state'] not in self._next_commit_states(commit.state, is_approver):
+                    raise err_bad_request(f'invalid state {req.state}')
+            # update commit
+            self._query_commit(session, commit_id).update(req_dict)
+            session.commit()
+            session.refresh(commit)
+            return commit
 
     def delete_commit(self):
         ...
 
-    def create_commit_file(self):
-        ...
+    def create_commit_file(self, commit_id: int, req: CreateJobFileReq, me: User,
+                           job_id: Optional[int], queue_id: Optional[int]):
+        req.prefix = self._formalize_prefix(req.prefix)
+        with self.get_session() as session:
+            # ensure commit and job exist
+            commit = self._get_commit(session, commit_id, job_id, queue_id)
+            # ensure commit state is valid
+            if commit.state != CommitState.DRAFT:
+                raise err_bad_request(f'forbid file create as commit {commit_id} is not in draft state')
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(session, commit.job.queue, me)
+            if commit.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_COMMIT]):
+                raise err_perm_deny()
 
-    def upload_commit_file(self):
-        ...
+            commit_file = CommitFile()
+            commit_file.prefix = req.prefix
+            commit_file.type = req.content_type
+            commit_file.commit_id = commit_id
 
+            session.add(commit_file)
+            session.commit()
+            session.refresh(commit_file)
+            return commit_file
+
+    async def upload_commit_file(self, file_id: int, file: UploadFile, me: User,
+                           commit_id: int, job_id: Optional[int], queue_id: Optional[int]):
+        if not self.storage.is_local():
+            raise err_bad_request('upload is not supported for non-local storage')
+
+        with self.get_session() as session:
+            commit_file = self._get_commit_file(session, file_id, commit_id, job_id, queue_id)
+            # ensure commit state is valid
+            if commit_file.commit.state != CommitState.DRAFT:
+                raise err_bad_request(f'forbid file upload: state of commit {commit_id} {CommitState(commit_file.commit.state)} is not DRAFT')
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(session, commit_file.commit.job.queue, me)
+            if commit_file.commit.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_COMMIT]):
+                raise err_perm_deny()
+            # save file
+            prefix = self._get_full_prefix(commit_file.prefix,
+                                           queue_id=commit_file.commit.job.queue_id,
+                                           job_id=commit_file.commit.job_id,
+                                           commit_id=commit_file.commit_id)
+            await self.storage.save_file(prefix, await file.read())
+            if commit_file.type is None:
+                commit_file.type = file.content_type
+            commit_file.uploaded = 1
+            session.commit()
+            session.refresh(commit_file)
+            return commit_file
+
+    async def get_commit_file_upload_url(self, file_id: int, me: User,
+                                         commit_id: Optional[int], job_id: Optional[int], queue_id: Optional[int]):
+        if not self.storage.is_local():
+            raise err_bad_request('upload directly for non-local storage')
+
+        with self.get_session() as session:
+            commit_file = self._get_commit_file(
+                session, file_id, commit_id, job_id, queue_id)
+            # ensure commit state is valid
+            if commit_file.commit.state != CommitState.DRAFT:
+                raise err_bad_request(
+                    f'forbid file upload: state of commit {commit_id} {CommitState(commit_file.commit.state)} is not DRAFT')
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(
+                session, commit_file.commit.job.queue, me)
+            if commit_file.commit.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_COMMIT]):
+                raise err_perm_deny()
+            prefix = self._get_full_prefix(commit_file.prefix,
+                                           queue_id=commit_file.commit.job.queue_id,
+                                           job_id=commit_file.commit.job_id,
+                                           commit_id=commit_file.commit_id)
+        await self.storage.get_upload_url(prefix)
+
+    async def dowload_commit_file(self, file_id: int, me: User,
+                                  commit_id: Optional[int], job_id: Optional[int], queue_id: Optional[int] = None):
+        url, content = None, None
+        with self.get_session() as session:
+            commit_file = self._get_commit_file(
+                session, file_id, commit_id, job_id, queue_id)
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(
+                session, commit_file.commit.job.queue, me)
+            if commit_file.commit.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.VIEW_COMMIT]):
+                raise err_perm_deny()
+            prefix = self._get_full_prefix(commit_file.prefix,
+                                           queue_id=commit_file.commit.job.queue_id,
+                                           job_id=commit_file.commit.job_id,
+                                           commit_id=commit_file.commit_id)
+        if self.storage.is_local():
+            content = await self.storage.get_file_content(prefix)
+        else:
+            url = await self.storage.get_download_url(prefix)
+        return url, content
+
+    # TODO: refactor the following methods
+    def _get_commit_file(self, session, file_id: int, commit_id: Optional[int], job_id: Optional[int], queue_id: Optional[int]):
+        commit_file: CommitFile = session.query(CommitFile).filter_by(id=file_id).first()
+        if commit_file is None:
+            raise err_not_found('commit_file', file_id)
+        if commit_id is not None and commit_file.commit_id != commit_id:
+            raise err_bad_request(f'file {file_id} does not belong to commit {commit_id}')
+        if job_id is not None and commit_file.commit.job_id != job_id:
+            raise err_bad_request(f'commit {commit_file.commit_id} does not belong to job {job_id}')
+        if queue_id is not None and commit_file.commit.job.queue_id != queue_id:
+            raise err_bad_request(f'job {commit_file.commit.job_id} does not belong to queue {queue_id}')
+        return commit_file
+
+    def _get_commit(self, session, commit_id:int, job_id: Optional[int], queue_id: Optional[int]):
+        commit: Commit = session.query(Commit).filter_by(id=commit_id).first()
+        if commit is None:
+            raise err_not_found('commit', commit_id)
+        if job_id is not None and commit.job_id != job_id:
+            raise err_bad_request(f'commit {commit_id} does not belong to job {job_id}')
+        if queue_id is not None and commit.job.queue_id != queue_id:
+            raise err_bad_request(f'job {commit.job_id} does not belong to queue {queue_id}')
+        return commit
 
     def _get_job_file(self, session, file_id: int, job_id: Optional[int], queue_id: Optional[int]) -> JobFile:
         job_file: JobFile = session.query(JobFile).filter_by(id=file_id).first()
@@ -415,16 +570,31 @@ class JobQueueService(DbService):
     def _query_jobs(self, session, queue_id: int):
         return session.query(Job).filter_by(queue_id=queue_id, deleted=0)
 
+    def _query_commit(self, session, commit_id: int):
+        return session.query(Commit).filter_by(id=commit_id)
+
     def _next_job_states(self, state: Optional[int], is_approver: bool = False):
         """
         validate if a job state transition is allowed
-        DRAFT -> READY -> ENQUEUED or DEQUEUED
+        DRAFT -> SUBMITTED -> ENQUEUED or DEQUEUED
         """
         if state in [None, JobState.DRAFT]:
             if is_approver:
                 return [JobState.DRAFT, JobState.SUBMITTED, JobState.ENQUEUED, JobState.DEQUEUED]
             return [JobState.DRAFT, JobState.SUBMITTED]
         return [JobState.ENQUEUED, JobState.DEQUEUED]
+
+    def _next_commit_states(self, state: Optional[int], is_approver: bool = False):
+        """
+        validate if a commit state transition is allowed
+        DRAFT -> SUBMITTED  or ABORTED -> ACCEPTED or REJECTED
+        """
+        if state in [None, CommitState.DRAFT]:
+            if is_approver:
+                return [CommitState.DRAFT, CommitState.SUBMITTED, CommitState.ACCEPTED, CommitState.REJECTED]
+            return [CommitState.DRAFT, CommitState.SUBMITTED, CommitState.ABORTED]
+        return [CommitState.ACCEPTED, CommitState.REJECTED]
+
 
     def _auto_enqueue(self, state: int, auto_enqueue: bool):
         if state == JobState.SUBMITTED and auto_enqueue:
