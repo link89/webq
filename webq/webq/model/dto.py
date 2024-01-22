@@ -31,7 +31,7 @@ class UserPerm(IntFlag):
     CREATE_USER = 1 << 2
     UPDATE_USER = 1 << 3
 
-    VIEW_JOB_QUEUES = 1 << 4
+    VIEW_JOB_QUEUE = 1 << 4
     CREATE_JOB_QUEUE = 1 << 5
     UPDATE_JOB_QUEUE = 1 << 6
 

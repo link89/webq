@@ -26,7 +26,6 @@ class Config(BaseModel):
     storage: Storage = Storage()
 
 
-
 class ConfigComponent:
     data: Config
 

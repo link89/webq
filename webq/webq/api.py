@@ -6,7 +6,8 @@ from typing import List, Annotated
 
 from .model.db import User
 from .model.dto import (
-    CreateUserReq, UserRes,
+    UserPerm, JobQueuePerm, JobState, CommitState,
+    CreateUserReq, UpdateUserReq, UserRes,
     CreateJobQueueReq, JobQueueRes,
     CreateJobReq, UpdateJobReq, JobRes, CreateJobFileReq, JobFileRes,
     ApplyJobsReq,
@@ -24,6 +25,7 @@ api_key_header = APIKeyHeader(name="x-auth-token", auto_error=False)
 auth_apis = APIRouter(tags=['Auth'])
 user_apis = APIRouter(tags=['User'])
 job_queue_apis = APIRouter(tags=['JobQueue'])
+other_apis = APIRouter(tags=['Other'])
 
 
 def get_auth_user(oauth2_token: Annotated[str, Depends(oauth2_scheme)],
@@ -42,6 +44,22 @@ def get_auth_user(oauth2_token: Annotated[str, Depends(oauth2_scheme)],
         detail="Not authenticated",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+@other_apis.get('/constants.json')
+async def get_constant():
+    return {
+        'user_roles': {
+            'default': 0,
+            'admin': UserPerm.ADMIN,
+        },
+        'job_queue_user_roles': {
+            'owner': JobQueuePerm.OWNER,
+            'worker': JobQueuePerm.APPLY_JOB,
+        },
+        'job_states': {state.name: state.value for state in JobState},
+        'commit_states': {state.name: state.value for state in CommitState},
+    }
 
 
 @auth_apis.get('/me')
@@ -66,13 +84,28 @@ async def create_user(req: CreateUserReq,
     user = ctx.user_service.create_user(req, me)
     return UserRes.from_orm(user)
 
-
 # TODO: pagination
 @user_apis.get('/users')
 async def get_users(me: Annotated[User, Depends(get_auth_user)],
                     ctx: Annotated[Context, Depends(get_context)]) -> List[UserRes]:
     users = ctx.user_service.get_users(me)
     return [UserRes.from_orm(u) for u in users]
+
+
+@user_apis.put('/users/{user_id}')
+async def update_user(user_id: int,
+                      req: UpdateUserReq,
+                      me: Annotated[User, Depends(get_auth_user)],
+                      ctx: Annotated[Context, Depends(get_context)]) -> UserRes:
+    user = ctx.user_service.update_user(user_id, req, me)
+    return UserRes.from_orm(user)
+
+
+@user_apis.delete('/users/{user_id}')
+async def delete_user(user_id: int,
+                      me: Annotated[User, Depends(get_auth_user)],
+                      ctx: Annotated[Context, Depends(get_context)]):
+    ctx.user_service.delete_user(user_id, me)
 
 
 @job_queue_apis.post('/job-queues')
@@ -91,6 +124,23 @@ async def create_job(queue_id: int,
     job = ctx.job_queue_service.create_job(queue_id, req, me)
     return JobRes.from_orm(job)
 
+@job_queue_apis.get('/job-queues/{queue_id}/jobs')
+async def get_jobs(queue_id: int,
+                   me: Annotated[User, Depends(get_auth_user)],
+                   ctx: Annotated[Context, Depends(get_context)]) -> List[JobRes]:
+    jobs = ctx.job_queue_service.get_jobs(queue_id, me)
+    return [JobRes.from_orm(j) for j in jobs]
+
+
+@job_queue_apis.get('/job-queues/{queue_id}/jobs/{job_id}')
+async def get_job(queue_id: int,
+                  job_id: int,
+                  me: Annotated[User, Depends(get_auth_user)],
+                  ctx: Annotated[Context, Depends(get_context)]) -> JobRes:
+    job = ctx.job_queue_service.get_job(job_id, me, queue_id=queue_id)
+    return JobRes.from_orm(job)
+
+
 @job_queue_apis.put('/job-queues/{queue_id}/jobs/{job_id}')
 async def update_job(queue_id: int,
                      job_id: int,
@@ -99,6 +149,14 @@ async def update_job(queue_id: int,
                      ctx: Annotated[Context, Depends(get_context)]) -> JobRes:
     job = ctx.job_queue_service.update_job(job_id, req, me, queue_id=queue_id)
     return JobRes.from_orm(job)
+
+
+@job_queue_apis.delete('/job-queues/{queue_id}/jobs/{job_id}')
+async def delete_job(queue_id: int,
+                     job_id: int,
+                     me: Annotated[User, Depends(get_auth_user)],
+                     ctx: Annotated[Context, Depends(get_context)]):
+    ctx.job_queue_service.delete_job(job_id, me, queue_id=queue_id)
 
 
 @job_queue_apis.post('/job-queues/{queue_id}/jobs/{job_id}/files')
@@ -134,7 +192,7 @@ async def download_job_file(queue_id: int,
     if url is not None:
         return RedirectResponse(url=url)
     else:
-        return Response(content=content)  # FIXME: refactor to use StreamingResponse
+        return Response(content=content)  # FIXME: use StreamingResponse for better performance
 
 
 @job_queue_apis.post('/job-queues/{queue_id}/apply-jobs')

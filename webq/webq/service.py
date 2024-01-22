@@ -220,6 +220,13 @@ class JobQueueService(DbService):
             session.refresh(job)
             return job
 
+    def get_jobs(self, queue_id: int, me: User):
+        with self.get_session() as session:
+            query = self._query_jobs(session, queue_id)
+            if not has_perm(me.perm, [UserPerm.ADMIN, UserPerm.VIEW_JOB_QUEUE]):
+                query = query.filter_by(owner_id=me.id)
+            return query.all()
+
     def get_job(self, job_id: int, me: User, queue_id: Optional[int] = None):
         with self.get_session() as session:
             # ensure queue and job exist
@@ -256,6 +263,18 @@ class JobQueueService(DbService):
             session.commit()
             session.refresh(job)
             return job
+
+    def delete_job(self, job_id: int, me: User, queue_id: Optional[int] = None):
+        with self.get_session() as session:
+            job = self._get_job(session, job_id, queue_id)
+            # ensure user has permission
+            queue_perm = self._get_queue_perm(session, job.queue, me)
+            if job.owner_id != me.id \
+                    and not has_perm(queue_perm, [JobQueuePerm.OWNER, JobQueuePerm.UPDATE_JOB]):
+                raise err_perm_deny()
+            # delete job
+            self._query_job(session, job_id).update({'deleted': 1})
+            session.commit()
 
     def create_job_file(self, job_id: int, req: CreateJobFileReq, me: User, queue_id: Optional[int] = None):
         req.prefix = self._formalize_prefix(req.prefix)
@@ -406,9 +425,6 @@ class JobQueueService(DbService):
             session.commit()
             session.refresh(commit)
             return commit
-
-    def delete_commit(self):
-        ...
 
     def create_commit_file(self, commit_id: int, req: CreateCommitFileReq, me: User,
                            job_id: int, queue_id: int):
