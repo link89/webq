@@ -25,10 +25,16 @@ def db_init(c: str):
     ctx.user_service.create_admin()
 
 
+def config_init():
+    from .config import CONFIG_EXAMPLE
+    print(CONFIG_EXAMPLE)
+
+
 def main():
     fire.Fire({
         'start': start,
         'db-init': db_init,
+        'config-init': config_init,
     })
 
 

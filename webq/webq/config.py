@@ -19,7 +19,6 @@ class Storage(BaseModel):
 
 class Config(BaseModel):
     base_url: str = 'http://localhost:5000'
-    proxy_base_url : Optional[str] = None
     log_level: str = 'info'
 
     db_url: str = 'sqlite:///./webq.sqlite3'
@@ -44,7 +43,16 @@ class ConfigComponent:
         assert url.hostname, 'hostname is required'
         return url.hostname, url.port or 80
 
-    def get_resource_base_url(self):
-        if self.data.proxy_base_url:
-            return self.data.proxy_base_url
-        return self.data.base_url
+
+CONFIG_EXAMPLE = '''\
+base_url: http://localhost:5000
+log_level: info
+
+# url of database, see https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls
+# default is sqlite3
+db_url: sqlite:///./webq.sqlite3
+
+storage:
+  fs:
+    path: ./storage
+'''
